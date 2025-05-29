@@ -30,12 +30,12 @@ torch.cuda.empty_cache()
 
 # Simulate command-line arguments
 sys.argv = ['train.py', '--seg_model','UNET', '--train_set_dir',
-            'D:/MSc AV Project/cGAN-Seg-main_2/cGAN-Seg_datasets/FW_real+gen_2/FW_real+gen20/FW_real25/train',
+            '',
             '--lr','0.0001',
             '--p_vanilla_pretrain','0.5', '--p_vanilla_maintrain', '0.2','--p_diff','0.2', '--patience_pretrain','200', '--patience_maintrain', '200',
-            '--output_dir','Pretrain+Finetune_modified_FW_real25_fce_tv(0.3,0.7)_lrsched0.0001_2']
+            '--output_dir','']
 
-#previous_bestseg_checkpoint = 'D:/MSc AV Project/cGAN-Seg-main_2/Pretrain+Finetune_modified_FW_real26_fce_tv(0.3,0.7)_lrsched0.0001/Seg.pth'
+#previous_bestseg_checkpoint = ''
 
 # Set a constant seed for reproducibility
 SEED = 12345
@@ -104,7 +104,7 @@ def train(args, image_size=[512,768], image_means=[0.5], image_stds=[0.5], save_
     valid_data = BasicDataset(valid_sample_pairs, transforms=dev_transforms, gen_nc=args.gen_nc)
     #print(len(valid_data)) #debugging
     
-    # Set num_workers to # of CPU cores (but often 4-8 is enough)
+    # Set num_workers to # of CPU cores
     num_workers = min(os.cpu_count(), 32) 
     print("Num_worker:",num_workers)
     #def seed_worker(worker_id):
@@ -167,29 +167,10 @@ def train(args, image_size=[512,768], image_means=[0.5], image_stds=[0.5], save_
         print(
     f"[Epoch {pretrain_epoch}/{args.max_pretrain_epoch}], [Seg loss: {epoch_loss/len(train_pretrain_iterator):.3f}]"
 )
-        
-        # mean_pred_coverage,mean_target_coverage,focal_tv_weight,focal_weight= Seg_criterion.update_alpha_beta()
-       # print(f""
-    #New train_tv_alpha: {Seg_criterion.tversky_alpha.item():.2f},
-    #New train_tv_beta: {Seg_criterion.tversky_beta.item():.2f},
-    #train_predicted_Coverage : {mean_pred_coverage:.2f},
-    #train_target_Coverage : {mean_target_coverage:.2f},
-    #train_focal_tv_weight: {focal_tv_weight:.2f},
-    #train_focal_weight: {focal_weight:.2f}"")
-              
           
 
         val_scores = evaluate_segmentation(Seg, valid_iterator, device,Seg_criterion,len(valid_data),is_avg_prec=True,prec_thresholds=[0.5],output_dir='train_val_pretrain')
         #val_scores = evaluate_segmentation(Seg, train_pretrain_iterator, device,Seg_criterion,len(train_pretrain_data),is_avg_prec=True,prec_thresholds=[0.5],output_dir=None)
-       
-       # mean_pred_coverage,mean_target_coverage,focal_tv_weight,focal_weight= Seg_criterion.update_alpha_beta()
-        #print(f""
-    #New val_tv_alpha: {Seg_criterion.tversky_alpha.item():.2f},
-    #New val_tv_beta: {Seg_criterion.tversky_beta.item():.2f},
-    #val_predicted_Coverage : {mean_pred_coverage:.2f},
-    #val_target_Coverage : {mean_target_coverage:.2f},
-    #val_focal_tv_weight: {focal_tv_weight:.2f},
-    #val_focal_weight: {focal_weight:.2f}"")
             
             
         logging.info('>>>> Epoch:%d  , Dice score=%f , avg fscore=%f'  % (pretrain_epoch,val_scores['dice_score'], val_scores['avg_fscore']))
@@ -222,9 +203,7 @@ def train(args, image_size=[512,768], image_means=[0.5], image_stds=[0.5], save_
     scheduler_D1 = ReduceLROnPlateau(optimizer_D1, 'min', patience=80, factor=0.85)
     scheduler_D2 = ReduceLROnPlateau(optimizer_D2, 'min', patience=80, factor=0.85)
     d_criterion = nn.MSELoss()
-    Gen_criterion_1 = nn.L1Loss()
-    #Gen_criterion_1 = MSSSIMLoss(data_range=1.0, channel=1)  # For grayscale images
-    
+    Gen_criterion_1 = nn.L1Loss() 
     Gen_criterion_2 = VGGLoss()
     Gen = Gen.to(device) 
     D1 = D1.to(device)
@@ -457,7 +436,7 @@ def train(args, image_size=[512,768], image_means=[0.5], image_stds=[0.5], save_
                 writer.add_image('Real mask list at Epoch %d' % epoch, grid_real_masks, epoch)
                 writer.add_image('Predicted mask list at Epoch %d' % epoch, grid_pred_masks, epoch)
             
-            attention_overlay_images = scores['attention_overlay_images']
+            attention_overlay_images = scores['attention_overlay_images']  # use this block if attention overlay is required by the user in validation results
             if attention_overlay_images is not None:
                 attention_overlay_images_tensor = torch.stack([torch.from_numpy(overlay_image).permute(2, 0, 1) for overlay_image in attention_overlay_images]) 
                 attention_overlay_images_tensor = attention_overlay_images_tensor.cpu()
@@ -481,7 +460,7 @@ def train(args, image_size=[512,768], image_means=[0.5], image_stds=[0.5], save_
                    writer.add_image('Real mask list at Epoch %d' % epoch, grid_real_masks, epoch)
                    writer.add_image('Predicted mask list at Epoch %d' % epoch, grid_pred_masks, epoch)
             
-                   attention_overlay_images = scores['attention_overlay_images']
+                   attention_overlay_images = scores['attention_overlay_images']  # use this block if attention overlay is required by the user in validation results
                    if attention_overlay_images is not None:
                       attention_overlay_images_tensor = torch.stack([torch.from_numpy(overlay_image).permute(2, 0, 1) for overlay_image in attention_overlay_images]) 
                       attention_overlay_images_tensor = attention_overlay_images_tensor.cpu()
