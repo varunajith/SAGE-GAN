@@ -1,0 +1,167 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DCBlock(nn.Module):
+    """Dense Convolutional Block with controlled output channels"""
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # Ensure out_channels is divisible by 4 for clean splits
+        assert out_channels % 4 == 0, "out_channels must be divisible by 4"
+        
+        # First convolution path (1x1)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels//4, 1),
+            nn.BatchNorm2d(out_channels//4),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Second convolution path (3x3)
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels//2, 3, padding=1),
+            nn.BatchNorm2d(out_channels//2),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Third convolution path (5x5)
+        self.conv5 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels//4, 5, padding=2),
+            nn.BatchNorm2d(out_channels//4),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.out_channels = out_channels
+        
+    def forward(self, x):
+        x1 = self.conv1(x)
+        x3 = self.conv3(x)
+        x5 = self.conv5(x)
+        return torch.cat([x1, x3, x5], dim=1)
+
+class ResPath(nn.Module):
+    """Residual Path with channel matching"""
+    def __init__(self, in_channels, out_channels, length):
+        super().__init__()
+        # Initial projection if channels don't match
+        self.proj = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
+        
+        self.blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, 3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(out_channels, out_channels, 3, padding=1),
+                nn.BatchNorm2d(out_channels)
+            ) for _ in range(length)
+        ])
+        
+    def forward(self, x):
+        x = self.proj(x)
+        for block in self.blocks:
+            residual = x
+            x = block(x)
+            x += residual
+            x = F.relu(x)
+        return x
+
+class Up(nn.Module):
+    """Upsampling block"""
+    def __init__(self, in_channels, out_channels, bilinear=True):
+        super().__init__()
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = nn.Conv2d(in_channels, out_channels, 1)
+        else:
+            self.up = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
+        
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        if hasattr(self, 'conv'):
+            x1 = self.conv(x1)
+        
+        # Handle potential size mismatches
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+        
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+        return x1
+
+class DCUNet(nn.Module):
+    def __init__(self, n_channels=1, n_classes=1, base_channels=32, bilinear=True):
+        super(DCUNet, self).__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.bilinear = bilinear
+        
+        # Encoder
+        self.dc1 = DCBlock(n_channels, base_channels)
+        self.respath1 = ResPath(base_channels, base_channels, 4)
+        self.down1 = nn.MaxPool2d(2)
+        
+        self.dc2 = DCBlock(base_channels, base_channels*2)
+        self.respath2 = ResPath(base_channels*2, base_channels*2, 3)
+        self.down2 = nn.MaxPool2d(2)
+        
+        self.dc3 = DCBlock(base_channels*2, base_channels*4)
+        self.respath3 = ResPath(base_channels*4, base_channels*4, 2)
+        self.down3 = nn.MaxPool2d(2)
+        
+        self.dc4 = DCBlock(base_channels*4, base_channels*8)
+        self.respath4 = ResPath(base_channels*8, base_channels*8, 1)
+        self.down4 = nn.MaxPool2d(2)
+        
+        # Bottleneck
+        self.bottleneck = DCBlock(base_channels*8, base_channels*16)
+        
+        # Decoder
+        self.up1 = Up(base_channels*16, base_channels*8, bilinear)
+        self.dc_up1 = DCBlock(base_channels*8 * 2, base_channels*8)  # x2 for concatenation
+        
+        self.up2 = Up(base_channels*8, base_channels*4, bilinear)
+        self.dc_up2 = DCBlock(base_channels*4 * 2, base_channels*4)
+        
+        self.up3 = Up(base_channels*4, base_channels*2, bilinear)
+        self.dc_up3 = DCBlock(base_channels*2 * 2, base_channels*2)
+        
+        self.up4 = Up(base_channels*2, base_channels, bilinear)
+        self.dc_up4 = DCBlock(base_channels * 2, base_channels)
+        
+        # Output
+        self.outc = nn.Conv2d(base_channels, n_classes, 1)
+
+    def forward(self, x):
+        # Encoder
+        x1 = self.dc1(x)
+        x1_res = self.respath1(x1)
+        x2 = self.down1(x1)
+        
+        x2 = self.dc2(x2)
+        x2_res = self.respath2(x2)
+        x3 = self.down2(x2)
+        
+        x3 = self.dc3(x3)
+        x3_res = self.respath3(x3)
+        x4 = self.down3(x3)
+        
+        x4 = self.dc4(x4)
+        x4_res = self.respath4(x4)
+        x5 = self.down4(x4)
+        
+        # Bottleneck
+        x5 = self.bottleneck(x5)
+        
+        # Decoder
+        x = self.up1(x5, x4_res)
+        x = self.dc_up1(torch.cat([x, x4_res], dim=1))
+        
+        x = self.up2(x, x3_res)
+        x = self.dc_up2(torch.cat([x, x3_res], dim=1))
+        
+        x = self.up3(x, x2_res)
+        x = self.dc_up3(torch.cat([x, x2_res], dim=1))
+        
+        x = self.up4(x, x1_res)
+        x = self.dc_up4(torch.cat([x, x1_res], dim=1))
+        
+        return self.outc(x)
