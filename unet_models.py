@@ -191,29 +191,16 @@ class style_dc_conv_block(nn.Module):
     def forward(self, x,istyle,spatial_noise):#,linear_noise):# inoise):
        # Flatten spatial_noise to a 2D tensor: [B, H*W, C]
         B, H, W, C = spatial_noise.shape
-        # For self.to_noise1 and self.to_noise2, we are expecting an input of shape [B, 1].
-        # We can aggregate the spatial_noise tensor over its spatial dimensions to create
-        # a 1D tensor of shape [B, 1], which matches the expected input size.
-
-        # Step 1: Aggregate spatial_noise across spatial dimensions to reduce it to a scalar per batch
         spatial_noise_flattened = spatial_noise.mean([1, 2, 3], keepdim=True)  # Resulting shape [B, 1, 1, 1]
-
-        # Step 2: Pass the aggregated spatial noise to the noise layers
         noise1 = self.to_noise1(spatial_noise_flattened.view(B, -1))  # Now shape [B, out_c]
         noise2 = self.to_noise2(spatial_noise_flattened.view(B, -1))  # Now shape [B, out_c]
-
-        # Step 3: Process style noise
         style1 = self.to_style1(istyle)
         style2 = self.to_style2(istyle)
-
-        # Step 4: Apply convolution and noise
         x = self.conv1(x, style1)
         x = self.activation(x + noise1.view(B, -1, 1, 1))  # Reshape noise for broadcasting
-
         x = self.conv2(x, style2)
         x = self.activation(x + noise2.view(B, -1, 1, 1))  # Reshape noise for broadcasting
 
-       
         return x
 
 class encoder_block(nn.Module):
@@ -231,7 +218,7 @@ class encoder_block(nn.Module):
     
  
     
-################################################### Deepseek
+################################################### 
 class AttentionGate(nn.Module):
     def __init__(self, F_g, F_l, F_int):
         """
@@ -270,13 +257,6 @@ class AttentionGate(nn.Module):
         x1 = self.W_x(x)  # Transform encoder features
         psi = self.relu(g1 + x1)  # Add and apply ReLU
         psi = self.psi(psi)  # Sigmoid to get attention coefficients
-        #Temp = 0.4
-        #psi = self.psi(psi/Temp)
-        #output = torch.sigmoid(x*psi+x)
-        
-        #print(f"Attention coefficients min: {psi.min().item()}, max: {psi.max().item()}")
-        
-        #return output, psi
         return x*psi, psi # Apply attention coefficients to encoder features
 
  ##################################################
@@ -305,25 +285,6 @@ class encoder_attention_block(nn.Module):
 
 #############################################
 
-#################################################### Chatgpt  
-class AttentionGate2(nn.Module):
-    def __init__(self, in_channels, gating_channels, inter_channels):
-        super(AttentionGate2, self).__init__()
-        self.theta = nn.Conv2d(in_channels, inter_channels, kernel_size=1, stride=1, padding=0)
-        self.phi = nn.Conv2d(gating_channels, inter_channels, kernel_size=1, stride=1, padding=0)
-        self.psi = nn.Conv2d(inter_channels, 1, kernel_size=1, stride=1, padding=0)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x, g):
-        # Modify this part to handle different channel sizes
-        theta_x = self.theta(x)
-        phi_g = self.phi(g)
-        f = self.relu(theta_x + phi_g)
-        psi_f = self.sigmoid(self.psi(f))
-        return x * psi_f
-##########################################################################
-
 
 class style_decoder_block(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -345,20 +306,16 @@ class style_decoder_block(nn.Module):
         # Step 1: Upsample
         x = self.up(x)
         
-        # Step 2: Ensure spatial dimensions match skip connection
+       
         if x.shape[2:] != skip.shape[2:]:
             x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=True)
         
-        # Step 3: Concatenate with skip connection
         x = torch.cat([x, skip], axis=1)
         
-         # Unpack inoise tuple (spatial_noise, linear_noise)
         spatial_noise = inoise
 
-        # Pass them to the convolution block
         #x = self.conv(x, istyle, spatial_noise, linear_noise)
 
-        
         x = self.conv(x,istyle, inoise)
         
         return x #self.conv(x)
@@ -368,15 +325,15 @@ class style_decoder_attention_block(nn.Module):
         super().__init__()
 
         self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0)
-        self.attention_gate = AttentionGate(F_g=out_c, F_l=out_c, F_int=out_c // 2)  # Add attention gate
+        self.attention_gate = AttentionGate(F_g=out_c, F_l=out_c, F_int=out_c // 2) 
         self.conv = style_dc_conv_block(out_c + out_c, out_c)
 
     def forward(self, inputs, skip, istyle, inoise):
         x = self.up(inputs)  # Upsample the input feature map
         # Apply attention gate to the skip connection
         skip,psi = self.attention_gate(g=x, x=skip)
-        x = torch.cat([x, skip], axis=1)  # Concatenate upsampled feature map and attention-weighted skip connection
-        x = self.conv(x, istyle, inoise)  # Pass through the style and noise convolutional block
+        x = torch.cat([x, skip], axis=1) 
+        x = self.conv(x, istyle, inoise) 
         return x
     
 class StyleUnetGenerator(nn.Module):
@@ -390,13 +347,10 @@ class StyleUnetGenerator(nn.Module):
 
 
         # Encoder (with your original channels)
-        self.e1 = encoder_block(1, 64)       # -> [B, 64, H/2, W/2]
-        self.e2 = encoder_block(64, 128)     # -> [B, 128, H/4, W/4]
-        self.e3 = encoder_block(128, 256)    # -> [B, 256, H/8, W/8]
-        self.e4 = encoder_block(256, 512)    # -> [B, 512, H/16, W/16]
-       # self.e5 = encoder_block(512, 512)    # -> [B, 512, H/32, W/32] (additional)
-        
-        # Bottleneck with 1024 channels (as requested)
+        self.e1 = encoder_block(1, 64)   
+        self.e2 = encoder_block(64, 128)     
+        self.e3 = encoder_block(128, 256)    
+        self.e4 = encoder_block(256, 512)  
         self.b = en_conv_block(512,1024)
         #self.bottleneck = nn.Sequential(
             #nn.Conv2d(512, 1024, 3, padding=1),
@@ -408,47 +362,14 @@ class StyleUnetGenerator(nn.Module):
        # )
         
         # Decoder with channel matching
-        self.d1 = style_decoder_block(1024, 512)  # Input:1024 + Skip:512 → Output:512
-        self.d2 = style_decoder_block(512, 256)    # Input:512 + Skip:256 → Output:256
-        self.d3 = style_decoder_block(256, 128)    # Input:256 + Skip:128 → Output:128
-        self.d4 = style_decoder_block(128, 64)     # Input:128 + Skip:64 → Output:64
+        self.d1 = style_decoder_block(1024, 512)  
+        self.d2 = style_decoder_block(512, 256)   
+        self.d3 = style_decoder_block(256, 128)    
+        self.d4 = style_decoder_block(128, 64)     
 
         """ Classifier """
         self.outputs = nn.Conv2d(64, output_nc, kernel_size=1, padding=0)
-    
-   # def latent_to_w(self,style_vectorizer, latent_descr):
-       # return [(style_vectorizer(z), num_layers) for z, num_layers in latent_descr]
-
-   # def styles_def_to_tensor(self,styles_def):
-       # return torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in styles_def], dim=1)
-    
-    
-    
-    #def latent_to_w(self, style_vectorizer, latent_descr):
-    #Debug print to verify input
-    # print(f"latent_to_w input: {len(latent_descr)} tuples")
-    
-    # Process each z through StyleVectorizer
-     #styles = []
-     #for z, num_layers in latent_descr:
-        #w = style_vectorizer(z)
-        #print(f"StyleVectorizer output shape: {w.shape}")  # Should be [batch, latent_dim]
-        #styles.append((w, num_layers))
-    
-    # return styles
-
-    #def styles_def_to_tensor(self, styles_def):
-    # Debug print
-     #print(f"styles_def input: {len(styles_def)} styles")
-    
-    # Stack all style vectors
-     #style_tensors = [t for t, n in styles_def]
-     #stacked = torch.stack(style_tensors, dim=1)  # [batch, num_styles, latent_dim]
-    
-    # print(f"Stacked styles shape: {stacked.shape}")
-     #return stacked
-    
-    
+     
     def latent_to_w(self,style_vectorizer, latent_descr):
         
           return [(style_vectorizer(z), num_layers) for z, num_layers in latent_descr]
@@ -457,18 +378,14 @@ class StyleUnetGenerator(nn.Module):
         return torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in styles_def], dim=1)
 
     
-    
     def forward(self, inputs,style, input_noise):
-         # Verify input counts
          # Handle style - create dummy if None
         if style is None:
          batch_size = inputs.size(0)
          dummy_style = torch.zeros(batch_size, self.latent_dim).to(inputs.device)
          style = [(dummy_style, 1)] * 4  # 4 style blocks with zero vectors
     
-       
     
-        
         """ StyleNet """
         # Process styles
        # w_space = self.latent_to_w(self.StyleNet, style)
@@ -485,36 +402,34 @@ class StyleUnetGenerator(nn.Module):
         s2, p2 = self.e2(p1)
         s3, p3 = self.e3(p2)
         s4, p4 = self.e4(p3)
-       # s5, p5 = self.e5(p4)  # Additional encoder layer
+      
         
         # Bottleneck
-        b = self.b(p4)  # [B,1024,H/32,W/32]
+        b = self.b(p4)  
         styles = w_styles.transpose(0, 1)
         # Decoder
-        #d1 = self.d1(b, s4, style[0],input_noise)
-        #d2 = self.d2(d1, s3, style[1],input_noise)
-        #d3 = self.d3(d2, s2, style[2],input_noise)
-        #d4 = self.d4(d3, s1, style[3],input_noise)
-        # Create properly shaped noise for each decoder level
+        d1 = self.d1(b, s4, style[0],input_noise)
+        d2 = self.d2(d1, s3, style[1],input_noise)
+        d3 = self.d3(d2, s2, style[2],input_noise)
+        d4 = self.d4(d3, s1, style[3],input_noise
+        
         def prepare_noise(base_tensor, noise):
           B, _, H, W = base_tensor.shape
         
           if noise is None:
             # Create properly shaped zeros
             spatial_noise = torch.zeros(B, H, W, 1).to(base_tensor.device)
-            #linear_noise = torch.zeros(B, 1).to(base_tensor.device)
           else:
             # Process spatial noise
             if noise.dim() == 4:  # [B, 1, H, W]
                 spatial_noise = noise.permute(0, 2, 3, 1)
-               # linear_noise = noise.mean([2, 3])  # [B, 1]
             elif noise.dim() == 2:  # [B, D]
                 spatial_noise = noise.view(B, 1, 1, -1).expand(-1, H, W, -1)
-                #linear_noise = noise.mean(1, keepdim=True)  # [B, 1]
+
             else:
                 raise ValueError(f"Unexpected noise dimension: {noise.dim()}")
         
-          return (spatial_noise)#, linear_noise)  # Return as tuple instead of dict
+          return (spatial_noise)
     
        # Prepare noise
         spatial_noise = prepare_noise(b, input_noise)
@@ -525,10 +440,6 @@ class StyleUnetGenerator(nn.Module):
         d3 = self.d3(d2, s2, styles[2], spatial_noise)
         d4 = self.d4(d3, s1, styles[3], spatial_noise)
         
-       # d1 = self.d1(b, s4, styles[0],input_noise)
-       # d2 = self.d2(d1, s3, styles[1],input_noise)
-        #d3 = self.d3(d2, s2, styles[2],input_noise)
-        #d4 = self.d4(d3, s1, styles[3],input_noise)
 
         """ Classifier """
         outputs = self.outputs(d4)
@@ -574,287 +485,6 @@ class ResBlock(nn.Module):
         x=self.bn(x)
         x=self.relu(x)
         return x
-
-
-###########################################################
-###########################################################
-###########################################################
-#warning experimental
-'''
-class StyleDecoderBlock_2(nn.Module):
-    def __init__(self, in_channels, out_channels, latent_dim=128):
-        super().__init__()
-        
-        # Improved upsampling with learned parameters
-        self.up = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.LeakyReLU(0.2, True)
-        )
-        
-        # Style-modulated convolution block
-        self.conv = StyleModulatedConv(out_channels*2, out_channels, latent_dim)
-        
-        # Noise injection scaling factors
-        self.noise_scale = nn.Parameter(torch.zeros(1))
-        # Style projection layers
-        #self.style_scale = nn.Linear(latent_dim, out_channels)
-        #self.style_bias = nn.Linear(latent_dim, out_channels)
-    def prepare_noise(self, base_tensor, noise):
-        B, C, H, W = base_tensor.shape
-    
-        if noise is None:
-        # Create properly shaped zeros if no noise provided
-            return torch.zeros(B, 1, H, W, device=base_tensor.device)
-    
-        # Handle different noise input formats
-        if noise.dim() == 2:  # [B, D] latent noise
-            noise = noise.view(B, -1, 1, 1).expand(-1, -1, H, W)
-        elif noise.dim() == 4:  # [B, 1, H', W'] spatial noise
-            # Resize to match current feature map dimensions
-            noise = F.interpolate(noise, size=(H, W), mode='bilinear', align_corners=True)
-    
-        # Ensure single channel if needed
-        if noise.size(1) > 1:
-            noise = noise[:,:1,:,:]  # Just use first channel
-    
-        return noise         
-    def forward(self, x, skip, style, noise):
-        x = self.up(x)
-        
-        # Adaptive resizing if needed
-        if x.shape[2:] != skip.shape[2:]:
-            x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=True)
-        
-        # Concatenate with skip connection
-        x = torch.cat([x, skip], dim=1)
-      
-        # Process noise to match spatial dimensions
-        noise = self.prepare_noise(x, noise)
-
-        
-        # Style-modulated convolution
-        x = self.conv(x, style, noise)
-        
-        return x
-
-class StyleModulatedConv(nn.Module):
-    def __init__(self, in_channels, out_channels, latent_dim):
-        super().__init__()
-        
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.norm = nn.InstanceNorm2d(out_channels)
-        self.activation = nn.LeakyReLU(0.2, True)
-        
-        # Style modulation
-        self.style_scale = nn.Linear(latent_dim, out_channels)
-        self.style_bias = nn.Linear(latent_dim, out_channels)
-        
-        # Noise processing
-        self.noise_conv = nn.Conv2d(1, out_channels, kernel_size=1) if latent_dim > 1 else None
-    def style_modulation(x, style_vector, channels):
-        """
-        x: input feature map [B, C, H, W]
-        style_vector: style vector [B, latent_dim]
-        channels: number of output channels needed
-        """
-        B = x.size(0)
-    
-        # Project style vector to required channels
-        style_scale = style_vector[:, :channels]  # Take first 'channels' dimensions
-        style_bias = style_vector[:, channels:2*channels]  # Next 'channels' dimensions
-    
-        # Expand for spatial dimensions
-        style_scale = style_scale.view(B, channels, 1, 1)
-        style_bias = style_bias.view(B, channels, 1, 1)
-    
-        # Apply modulation
-        return x * (1 + style_scale) + style_bias
-    
-    def forward(self, x, style, noise=None):
-        # Standard convolution
-        x = self.conv(x)
-        x = self.norm(x)
-        
-        # Style modulation
-        #style_scale = self.style_scale(style).unsqueeze(2).unsqueeze(3)
-        #style_bias = self.style_bias(style).unsqueeze(2).unsqueeze(3)
-        x =self.style_modulation(x,1)
-        
-        # Noise injection
-        if noise is not None and self.noise_conv is not None:
-            if noise.dim() == 4:
-                noise = self.noise_conv(noise)
-                x = x + noise
-        
-        return self.activation(x)
-
-class StyleUnetGenerator_2(nn.Module):
-    def __init__(self, style_latent_dim=128, style_depth=8, output_nc=3, ngf=64):
-        super().__init__()
-        
-        self.latent_dim = style_latent_dim
-        
-        # Enhanced Style Network with more capacity
-        self.StyleNet = nn.Sequential(
-            nn.Linear(style_latent_dim, style_latent_dim * 2),
-            nn.LeakyReLU(0.2, True),
-            nn.Linear(style_latent_dim * 2, style_latent_dim * 2),
-            nn.LeakyReLU(0.2, True),
-            nn.Linear(style_latent_dim * 2, style_latent_dim),
-        )
-        
-        # Encoder with more layers and residual connections
-        self.e1 = EncoderBlock_2(1, ngf)
-        self.e2 = EncoderBlock_2(ngf, ngf*2)
-        self.e3 = EncoderBlock_2(ngf*2, ngf*4)
-        self.e4 = EncoderBlock_2(ngf*4, ngf*8)
-        #self.e5 = EncoderBlock_2(ngf*8, ngf*8)
-        
-        # Bottleneck with self-attention
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(ngf*8, ngf*16, 3, padding=1),
-            SelfAttention(ngf*16),
-            nn.InstanceNorm2d(ngf*16),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ngf*16, ngf*16, 3, padding=1),
-            nn.InstanceNorm2d(ngf*16),
-            nn.LeakyReLU(0.2, True)
-        )
-        
-        # Decoder with attention gates
-        self.d1 = StyleDecoderBlock_2(ngf*16, ngf*8, style_latent_dim)
-        self.d2 = StyleDecoderBlock_2(ngf*8, ngf*8, style_latent_dim)
-        self.d3 = StyleDecoderBlock_2(ngf*8, ngf*4, style_latent_dim)
-        self.d4 = StyleDecoderBlock_2(ngf*4, ngf*2, style_latent_dim)
-        #self.d5 = StyleDecoderBlock_2(ngf*2, ngf, style_latent_dim)
-        
-        # Output with style modulation
-        self.out_conv = nn.Conv2d(ngf, output_nc, kernel_size=1)
-        self.out_style = nn.Linear(style_latent_dim, output_nc)
-        
-    def latent_to_w(self, style_vectorizer, latent_descr):
-        """Convert latent vectors to style vectors"""
-        # Ensure we always return a list of (tensor, int) tuples
-        styles = []
-        for item in latent_descr:
-            if isinstance(item, tuple):
-                z, num_layers = item
-            else:
-                z = item
-                num_layers = 1
-            
-            # Ensure z is a tensor
-            if isinstance(z, list):
-                z = torch.stack(z) if len(z) > 0 else torch.empty(0, self.latent_dim).to(self.device)
-        
-        # Process through style vectorizer
-        w = style_vectorizer(z)
-        styles.append((w, num_layers))
-    
-        return styles
-
-    def styles_def_to_tensor(self, styles_def):
-        """Convert style definitions to a tensor"""
-        # Handle empty case
-        if len(styles_def) == 0:
-            return torch.empty(0, self.latent_dim).to(self.device)
-    
-        # Process each style definition
-        style_tensors = []
-        for t, n in styles_def:
-            # Ensure t is a tensor
-            if isinstance(t, list):
-                t = torch.stack(t)
-        
-            # Expand to match layer count
-            style_tensors.append(t[:, None, :].expand(-1, n, -1))
-    
-        # Concatenate all style vectors
-        return torch.cat(style_tensors, dim=1)
-        
-    def forward(self, x, style=None, noise=None):
-        B = x.size(0)
-        
-        # Process style
-        if style is None:
-            style = torch.randn(B, self.latent_dim, device=x.device)
-        
-        # In your forward method:
-        w_space = self.latent_to_w(self.StyleNet, style)
-        w_styles = self.styles_def_to_tensor(w_space)
-
-        # Ensure we have at least one style vector
-        if w_styles.numel() == 0:
-            w_styles = torch.randn(x.size(0), 1, self.latent_dim).to(x.device)
-        
-        # Encoder path
-        s1, p1 = self.e1(x)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
-        #s5, p5 = self.e5(p4)
-        
-        # Bottleneck
-        b = self.bottleneck(p4)
-        
-        # Decoder path with style injection
-        d1 = self.d1(b, s4, w_styles, noise)
-        d2 = self.d2(d1, s3, w_styles, noise)
-        d3 = self.d3(d2, s2, w_styles, noise)
-        d4 = self.d4(d3, s1, w_styles, noise)
-        #d5 = self.d5(d4, s1, w, noise)
-        
-        # Style-modulated output
-        out = self.out_conv(d4)
-        style_mod = self.out_style(w_styles).view(B, -1, 1, 1)
-        out = out * (1 + style_mod)
-        
-        return torch.tanh(out)
-
-class SelfAttention(nn.Module):
-    """ Self attention layer """
-    def __init__(self, in_dim):
-        super().__init__()
-        self.query = nn.Conv2d(in_dim, in_dim//8, 1)
-        self.key = nn.Conv2d(in_dim, in_dim//8, 1)
-        self.value = nn.Conv2d(in_dim, in_dim, 1)
-        self.gamma = nn.Parameter(torch.zeros(1))
-        
-    def forward(self, x):
-        B, C, H, W = x.size()
-        q = self.query(x).view(B, -1, H*W).permute(0, 2, 1)
-        k = self.key(x).view(B, -1, H*W)
-        v = self.value(x).view(B, -1, H*W)
-        
-        attention = F.softmax(torch.bmm(q, k), dim=-1)
-        out = torch.bmm(v, attention.permute(0, 2, 1))
-        out = out.view(B, C, H, W)
-        
-        return self.gamma * out + x
-
-class EncoderBlock_2(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, padding=1),
-            nn.InstanceNorm2d(out_channels),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.InstanceNorm2d(out_channels),
-            nn.LeakyReLU(0.2, True)
-        )
-        self.down = nn.Conv2d(out_channels, out_channels, 3, stride=2, padding=1)
-        
-    def forward(self, x):
-        x = self.conv(x)
-        return x, self.down(x)
-
-'''
-############################################################
-############################################################
-############################################################
-
 
 
 class DeepSea(nn.Module):
@@ -962,7 +592,7 @@ class decoder_block(nn.Module):
 
         return x
 
-############################################################## Deepseek
+##############################################################
 class decoder_attention_block(nn.Module):
     def __init__(self, in_channels, out_channels, use_attention=True):
         super(decoder_attention_block, self).__init__()
@@ -1037,7 +667,7 @@ class UnetSegmentation(nn.Module):
         #print("Unet No of classes",self.n_classes)
         return outputs
 
-####################################################### Deepseek
+####################################################### 
 
 class AttentionUnetSegmentation(nn.Module):
     def __init__(self, n_channels=1, n_classes=1, use_attention=True):
@@ -1092,161 +722,3 @@ class AttentionUnetSegmentation(nn.Module):
         outputs = self.outputs(d4)
         return outputs,psi4
 
-class EdgeAttentionModule(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        
-        # Manual Sobel kernels
-        self.register_buffer('sobel_kernel_x', torch.tensor([
-            [-1., 0., 1.],
-            [-2., 0., 2.],
-            [-1., 0., 1.]
-        ]).view(1, 1, 3, 3))
-        
-        self.register_buffer('sobel_kernel_y', torch.tensor([
-            [-1., -2., -1.],
-            [0., 0., 0.],
-            [1., 2., 1.]
-        ]).view(1, 1, 3, 3))
-        
-        # Edge processing
-        self.edge_conv = nn.Sequential(
-            nn.Conv2d(1, channels//4, 3, padding=1, bias=False),
-            nn.InstanceNorm2d(channels//4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(channels//4, channels, 3, padding=1)
-        )
-        
-        # Attention mechanism
-        self.attention = nn.Sequential(
-            nn.Conv2d(channels*2, channels, 1),
-            nn.Sigmoid()
-        )
-    
-    def apply_sobel(self, x):
-        # Convert to grayscale if needed
-        if x.size(1) > 1:
-            x = x.mean(dim=1, keepdim=True)
-        
-        # Pad input
-        x = F.pad(x, (1,1,1,1), mode='reflect')
-        
-        # Apply Sobel filters
-        gx = F.conv2d(x, self.sobel_kernel_x)
-        gy = F.conv2d(x, self.sobel_kernel_y)
-        return torch.sqrt(gx**2 + gy**2 + 1e-6)  # Magnitude
-    
-    def forward(self, x):
-        # Get edges
-        edges = self.apply_sobel(x)
-        
-        # Process edges
-        edge_feats = self.edge_conv(edges)
-        
-        # Create attention
-        attention = self.attention(torch.cat([x, edge_feats], dim=1))
-        
-        # Apply
-        return x * attention + edge_feats
-
-class StyleUnetGeneratorWithEdgeAttention(nn.Module):
-    def __init__(self, style_latent_dim=256, style_depth=4, style_lr_mul=0.01, output_nc=3):
-        super().__init__()
-        self.latent_dim = style_latent_dim
-        
-        # Style network
-        self.StyleNet = StyleVectorizer(emb=style_latent_dim, depth=style_depth, lr_mul=style_lr_mul)
-        
-        # Encoder
-        self.e1 = encoder_block(1, 64)
-        self.e2 = encoder_block(64, 128)
-        self.e3 = encoder_block(128, 256)
-        self.e4 = encoder_block(256, 512)
-        
-        # Bottleneck
-        self.b = en_conv_block(512, 1024)
-        
-        # Decoder with Edge Attention
-        self.d1 = StyleDecoderBlockWithEdge(1024, 512)
-        self.d2 = StyleDecoderBlockWithEdge(512, 256)
-        self.d3 = StyleDecoderBlockWithEdge(256, 128)
-        self.d4 = StyleDecoderBlockWithEdge(128, 64)
-        
-        # Output
-        self.out_conv = nn.Conv2d(64, output_nc, 3, padding=1)
-        
-    def forward(self, inputs, style, input_noise):
-        # Style processing
-        w_space = [(self.StyleNet(z), n) for z, n in style]
-        w_styles = torch.cat([t[:, None, :].expand(-1, n, -1) for t, n in w_space], dim=1)
-        
-        # Encoder
-        s1, p1 = self.e1(inputs)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
-        
-        # Bottleneck
-        b = self.b(p4)
-        
-        # Decoder
-        styles = w_styles.transpose(0, 1)
-        d1 = self.d1(b, s4, styles[0], input_noise[0])
-        d2 = self.d2(d1, s3, styles[1], input_noise[1])
-        d3 = self.d3(d2, s2, styles[2], input_noise[2])
-        d4 = self.d4(d3, s1, styles[3], input_noise[3])
-        
-        return self.out_conv(d4)
-
-
-class StyleDecoderBlockWithEdge(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels + out_channels, out_channels, 3, padding=1),
-            nn.InstanceNorm2d(out_channels),
-            nn.LeakyReLU(0.2, True),
-            EdgeAttentionModule(out_channels),
-            nn.Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.InstanceNorm2d(out_channels),
-            nn.LeakyReLU(0.2, True)
-        )
-    
-    def forward(self, x, skip, style, noise):
-        x = self.up(x)
-        x = torch.cat([x, skip], dim=1)
-        style = style.view(style.size(0), -1, 1, 1)
-        return self.conv((x + noise) * (style + 1))
-    
-class HalfUnetSegmentation(nn.Module):
-    def __init__(self, n_channels=1, n_classes=1):
-        super(HalfUnetSegmentation, self).__init__()
-        self.n_channels = n_channels
-        self.n_classes = n_classes
-
-        """ Encoder """
-        self.e1 = encoder_block(n_channels, 64)
-        self.e2 = encoder_block(64, 128)
-        self.e3 = encoder_block(128, 256)
-        self.e4 = encoder_block(256, 512)
-
-        """ Bottleneck """
-        self.b = encoder_block(512, 1024)  # Can be the same as an encoder block
-        """ Classifier """
-        self.outputs = nn.Conv2d(1024, n_classes, kernel_size=1, padding=0)
-
-
-    def forward(self, inputs):
-        """ Encoder """
-        s1, p1 = self.e1(inputs)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
-
-        """ Bottleneck """
-        b, _ = self.b(p4)
-        outputs = self.outputs(b)# Bottleneck doesn't have skip connections in Half U-Net
-
-        # In Half U-Net, we return the bottleneck feature map or the last encoder output
-        return outputs  # Can return the feature map from the last encoding layer (without going to decoder)
