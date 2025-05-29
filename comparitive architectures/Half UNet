@@ -1,0 +1,99 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class GhostModule(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding='same')
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding='same', groups=out_channels)  # Depthwise separable conv
+        self.conv2_pointwise = nn.Conv2d(out_channels, out_channels, kernel_size=1)  # Pointwise conv
+        
+    def forward(self, x):
+        x1 = F.relu(self.bn1(self.conv1(x)))
+        x2 = F.relu(self.conv2_pointwise(self.conv2(x1)))
+        return torch.cat([x1, x2], dim=1)
+
+class HalfUNet(nn.Module):
+    def __init__(self, n_channels, n_classes, bilinear=False):
+        super(HalfUNet, self).__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.bilinear = bilinear
+
+        # Encoder
+        self.ghost1 = GhostModule(n_channels, 32)
+        self.ghost2 = GhostModule(64, 32)  # 64 because of concatenation in GhostModule
+        self.pool1 = nn.MaxPool2d(2)
+        
+        self.ghost3 = GhostModule(64, 32)
+        self.ghost4 = GhostModule(64, 32)
+        self.pool2 = nn.MaxPool2d(2)
+        
+        self.ghost5 = GhostModule(64, 32)
+        self.ghost6 = GhostModule(64, 32)
+        self.pool3 = nn.MaxPool2d(2)
+        
+        self.ghost7 = GhostModule(64, 32)
+        self.ghost8 = GhostModule(64, 32)
+        self.pool4 = nn.MaxPool2d(2)
+        
+        self.ghost9 = GhostModule(64, 32)
+        self.ghost10 = GhostModule(64, 32)
+
+        # Decoder (upsampling path)
+        self.up5 = nn.Upsample(scale_factor=16, mode='bilinear' if bilinear else 'nearest')
+        self.up4 = nn.Upsample(scale_factor=8, mode='bilinear' if bilinear else 'nearest')
+        self.up3 = nn.Upsample(scale_factor=4, mode='bilinear' if bilinear else 'nearest')
+        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear' if bilinear else 'nearest')
+
+        # Final layers
+        self.ghost11 = GhostModule(320, 32)  # 64*5=320 channels from concatenation
+        self.ghost12 = GhostModule(64, 32)
+        self.outc = nn.Conv2d(64, n_classes, kernel_size=1)
+
+    def forward(self, x):
+        # Encoder
+        x1 = self.ghost2(self.ghost1(x))
+        p1 = self.pool1(x1)
+        
+        x2 = self.ghost4(self.ghost3(p1))
+        p2 = self.pool2(x2)
+        
+        x3 = self.ghost6(self.ghost5(p2))
+        p3 = self.pool3(x3)
+        
+        x4 = self.ghost8(self.ghost7(p3))
+        p4 = self.pool4(x4)
+        
+        x5 = self.ghost10(self.ghost9(p4))
+
+        # Upsample and combine
+        u5 = self.up5(x5)
+        u4 = self.up4(x4)
+        u3 = self.up3(x3)
+        u2 = self.up2(x2)
+        
+        # Combine all feature maps
+        combined = torch.cat([x1, u2, u3, u4, u5], dim=1)
+        
+        # Final processing
+        x = self.ghost12(self.ghost11(combined))
+        logits = self.outc(x)
+        return logits
+
+    def use_checkpointing(self):
+        # Apply checkpointing to all major components
+        self.ghost1 = torch.utils.checkpoint(self.ghost1)
+        self.ghost2 = torch.utils.checkpoint(self.ghost2)
+        self.ghost3 = torch.utils.checkpoint(self.ghost3)
+        self.ghost4 = torch.utils.checkpoint(self.ghost4)
+        self.ghost5 = torch.utils.checkpoint(self.ghost5)
+        self.ghost6 = torch.utils.checkpoint(self.ghost6)
+        self.ghost7 = torch.utils.checkpoint(self.ghost7)
+        self.ghost8 = torch.utils.checkpoint(self.ghost8)
+        self.ghost9 = torch.utils.checkpoint(self.ghost9)
+        self.ghost10 = torch.utils.checkpoint(self.ghost10)
+        self.ghost11 = torch.utils.checkpoint(self.ghost11)
+        self.ghost12 = torch.utils.checkpoint(self.ghost12)
