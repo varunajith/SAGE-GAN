@@ -26,9 +26,9 @@ import sys
 
 # Simulate command-line arguments
 
-sys.argv = ['test_generation_model.py', '--test_set_dir','D:/MSc AV Project/cGAN-Seg-main_2/cGAN-Seg_datasets/FW_real+gen_2/FW_strided_10_test/test',
-            '--gen_ckpt_dir','D:/MSc AV Project/cGAN-Seg-main_2/Pretrain+Finetune_modified_FW_real25_fce_tv(0.3,0.7)_lrsched0.0001_2/Gen.pth',
-            '--output_dir','D:/MSc AV Project/cGAN-Seg-main_2/Pretrain+Finetune_modified_FW_real25_fce_tv(0.3,0.7)_lrsched0.0001_2/Gen']
+sys.argv = ['test_generation_model.py', '--test_set_dir','',
+            '--gen_ckpt_dir','',
+            '--output_dir','']
 
 
 
