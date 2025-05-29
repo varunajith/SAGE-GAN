@@ -1,0 +1,77 @@
+from .unet_parts import *
+
+class UNetPlusPlus(nn.Module):
+    def __init__(self, n_channels, n_classes, bilinear=False):
+        super(UNetPlusPlus, self).__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.bilinear = bilinear
+
+        # Encoder layers
+        self.inc = DoubleConv(n_channels, 64)
+        self.down1 = Down(64, 128)
+        self.down2 = Down(128, 256)
+        self.down3 = Down(256, 512)
+        factor = 2 if bilinear else 1
+        self.down4 = Down(512, 1024 // factor)
+
+        # Decoder grid parameters
+        encoder_channels = [64, 128, 256, 512, 1024 // factor]
+        self.decoder_layers = nn.ModuleList()
+
+        # Create decoder layers
+        for j in range(1, 5):  # j from 1 to 4 (depth levels)
+            current_level = nn.ModuleList()
+            for i in range(0, 5 - j):
+                #in_ch = encoder_channels[i + 1]
+                #out_ch = encoder_channels[i]
+                #current_level.append(Up(in_ch, out_ch, bilinear))
+                in_ch = encoder_channels[i] + encoder_channels[i + 1]
+                out_ch = encoder_channels[i]
+                current_level.append(Up(in_ch, out_ch, bilinear))
+
+            self.decoder_layers.append(current_level)
+
+        # Final output layer
+        self.outc = OutConv(64, n_classes)
+
+    def forward(self, x):
+        # Encoder path
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+
+        # Initialize decoder outputs with encoder features
+        decoder_outputs = [ [x1, x2, x3, x4, x5] ]
+
+        # Build the decoder grid
+        for j in range(1, 5):  # j: 1 to 4
+            current_level_outputs = []
+            for i in range(0, 5 - j):
+               
+                deeper_node = decoder_outputs[j-1][i+1]
+                
+                prev_node = decoder_outputs[j-1][i]
+               
+                up_block = self.decoder_layers[j-1][i]
+                current_node = up_block(deeper_node, prev_node)
+                current_level_outputs.append(current_node)
+            decoder_outputs.append(current_level_outputs)
+
+        
+        logits = self.outc(decoder_outputs[4][0])
+        return logits
+
+    def use_checkpointing(self):
+        # Apply checkpointing to each layer if needed
+        self.inc = torch.utils.checkpoint(self.inc)
+        self.down1 = torch.utils.checkpoint(self.down1)
+        self.down2 = torch.utils.checkpoint(self.down2)
+        self.down3 = torch.utils.checkpoint(self.down3)
+        self.down4 = torch.utils.checkpoint(self.down4)
+        for level in self.decoder_layers:
+            for block in level:
+                block = torch.utils.checkpoint(block)
+        self.outc = torch.utils.checkpoint(self.outc)
