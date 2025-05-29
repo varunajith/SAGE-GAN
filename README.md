@@ -4,6 +4,7 @@ SAGE-GAN: Our proposed model which consists of a self-attention U-Net which is p
 ![Pretrain+ Finetune CycleGAN Model flowchart-Page-1 drawio (1)](https://github.com/user-attachments/assets/75044958-246a-41e8-adc4-1522addc7f82)
 # Dataset
 The publicly available S1 nanoparticle dataset's link is being provided here: https://doi.org/10.6084/m9.figshare.11783661.v1
+
 This dataset has been cited in the following paper: Boiko, Daniil; Pentsak, Evgeniy; Cherepanova, Vera; Ananikov, Valentine (2020). Electron microscopy dataset for the recognition of nanoscale ordering effects and location of nanoparticles
 # Requirements
 - Install the requirements using the following code:
