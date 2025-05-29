@@ -1,0 +1,278 @@
+import os
+import argparse
+from unet_models import AttentionUnetSegmentation,UnetSegmentation,StyleUnetGenerator,NLayerDiscriminator,DeepSea
+from cellpose_model import Cellpose_CPnet
+from utils import set_requires_grad,mixed_list,noise_list,image_noise,initialize_weights
+from data import BasicDataset,get_image_mask_pairs
+import itertools
+import torch.nn as nn
+from tqdm import tqdm
+from evaluateCycleGAN import validate_cyclegan
+from evaluate import evaluate_segmentation
+from loss import CombinedLoss,VGGLoss
+import torch.utils.data as data
+import torch.nn.functional as F
+import transforms as transforms
+import torch
+import numpy as np
+import random
+import logging
+from diffaug import DiffAugment
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.tensorboard import SummaryWriter
+import torchvision
+
+import sys
+
+# Simulate command-line arguments
+sys.argv = ['train.py', '--seg_model','UNET', '--train_set_dir','','--lr','0.0001', '--p_vanilla','0.2', '--p_diff','0.2', '--patience','400', '--output_dir','']
+
+
+# Set a constant seed for reproducibility
+SEED = 12345
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+
+def reset_logging():
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+def train(args, image_size=[512,768], image_means=[0.5], image_stds=[0.5], train_ratio=0.8, save_checkpoint=True):
+    reset_logging()
+    logging.basicConfig(filename=os.path.join(args.output_dir, 'train.log'), filemode='w',
+                       format='%(asctime)s - %(message)s', level=logging.INFO)
+    logging.info('>>>> image size=(%d,%d) , learning rate=%f , batch size=%d' % (
+        image_size[0], image_size[1], args.lr, args.batch_size))
+    
+    writer = SummaryWriter(log_dir=os.path.join(args.output_dir, 'runs'))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    train_transforms = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomApply([transforms.RandomOrder([
+            transforms.RandomApply([transforms.ColorJitter(brightness=0.33, contrast=0.33, saturation=0.33, hue=0)],p=0.5),
+            transforms.RandomApply([transforms.GaussianBlur((5, 5), sigma=(0.1, 1.0))],p=0.0),
+            transforms.RandomApply([transforms.RandomHorizontalFlip(0.5)],p=0.5),
+            transforms.RandomApply([transforms.RandomVerticalFlip(0.5)],p=0.5),
+            transforms.RandomApply([transforms.AddGaussianNoise(0., 0.01)], p=0.5),
+            transforms.RandomApply([transforms.CLAHE()], p=0.5),
+            transforms.RandomApply([transforms.RandomAdjustSharpness(sharpness_factor=2)], p=0.5),
+            transforms.RandomApply([transforms.RandomCrop()], p=0.5),
+        ])],p=args.p_vanilla),
+        transforms.Resize(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=image_means, std=image_stds)
+    ])
+
+    dev_transforms = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=image_means, std=image_stds)
+    ])
+
+    sample_pairs = get_image_mask_pairs(args.train_set_dir)
+    #print(len(sample_pairs))# debugging
+    random.shuffle(sample_pairs)
+    train_sample_pairs = sample_pairs[:int(train_ratio*len(sample_pairs))]
+    valid_sample_pairs = sample_pairs[int(train_ratio*len(sample_pairs)):]
+
+    train_data = BasicDataset(train_sample_pairs, transforms=train_transforms,
+                             vanilla_aug=False if args.p_vanilla == 0 else True, gen_nc=args.gen_nc)
+    #print(len(train_data)) #debugging
+    valid_data = BasicDataset(valid_sample_pairs, transforms=dev_transforms, gen_nc=args.gen_nc)
+    #print(len(valid_data)) #debugging
+
+    train_iterator = data.DataLoader(train_data, shuffle=True, batch_size=args.batch_size, num_workers=8, pin_memory=False)
+    valid_iterator = data.DataLoader(valid_data, shuffle=False, batch_size=args.batch_size, num_workers=8, pin_memory=False)
+
+    Gen =  StyleUnetGenerator(style_latent_dim=128, output_nc=args.gen_nc)
+    
+    
+    D1 = NLayerDiscriminator(input_nc=args.gen_nc)
+    D2 = NLayerDiscriminator(input_nc=1)
+
+    initialize_weights(Gen)
+    initialize_weights(D1)
+    initialize_weights(D2)
+
+    optimizer_G = torch.optim.Adam(itertools.chain(Gen.parameters(), Seg.parameters()), lr=args.lr, betas=(0.9, 0.999))
+    optimizer_D1 = torch.optim.Adam(D1.parameters(), lr=args.lr, betas=(0.9, 0.999))
+    optimizer_D2 = torch.optim.Adam(D2.parameters(), lr=args.lr, betas=(0.9, 0.999))
+
+    grad_scaler = torch.cuda.amp.GradScaler(enabled=True)
+    
+    scheduler_G = ReduceLROnPlateau(optimizer_G, 'min', patience=100, factor=0.85, verbose=True)
+    scheduler_D1 = ReduceLROnPlateau(optimizer_D1, 'min', patience=100, factor=0.85, verbose=True)
+    scheduler_D2 = ReduceLROnPlateau(optimizer_D2, 'min', patience=100, factor=0.85, verbose=True)
+    
+    d_criterion_img = nn.MSELoss()  # Can keep for images
+    #d_criterion_mask = nn.MSELoss()
+    d_criterion_mask = nn.BCEWithLogitsLoss()  # Better for masks
+    Gen_criterion_1 = nn.L1Loss()
+    Gen_criterion_2 = VGGLoss()
+    
+
+    Gen = Gen.to(device)
+    D1 = D1.to(device)
+    D2 = D2.to(device)
+
+    d_criterion_img = d_criterion_img.to(device)
+    d_criterion_mask = d_criterion_mask.to(device)
+    Gen_criterion_1 = Gen_criterion_1.to(device)
+    Gen_criterion_2 = Gen_criterion_2.to(device)
+
+    
+ 
+    pretrain_lr = 0.0001
+    logging.info(">>>> Starting Pure CycleGAN Pretraining with lr={}".format(pretrain_lr))
+    
+    # We'll use the same generator for both directions
+    # Define separate optimizers
+    pretrain_optimizer_G = torch.optim.Adam(Gen.parameters(), lr=pretrain_lr, betas=(0.9, 0.999))
+    pretrain_optimizer_D1 = torch.optim.Adam(D1.parameters(), lr=pretrain_lr, betas=(0.9, 0.999))
+    pretrain_optimizer_D2 = torch.optim.Adam(D2.parameters(), lr=pretrain_lr, betas=(0.9, 0.999))
+    best_fid = float("inf")
+    best_g_loss = float("inf")
+    for pretrain_epoch in range(args.max_pretrain_epoch):
+        Gen.train()
+        D1.train()
+        D2.train()
+  
+        
+        epoch_g_loss = 0
+        epoch_d1_loss = 0
+        epoch_d2_loss = 0
+        
+        for step, batch in enumerate(tqdm(train_iterator)):
+            real_img = batch['image']
+            real_mask = batch['mask']
+            
+            # Adversarial ground truths
+            valid = torch.full((real_mask.shape[0], 1, 62, 94), 1.0, dtype=real_mask.dtype, device=device)
+            fake = torch.full((real_mask.shape[0], 1, 62, 94), 0.0, dtype=real_mask.dtype, device=device)
+
+            real_img = real_img.to(device=device, dtype=torch.float32)
+            real_mask = real_mask.to(device=device, dtype=torch.float32)
+
+            # =========================
+            #  Train Generators
+            # =========================
+            set_requires_grad([D1, D2], False)
+            pretrain_optimizer_G.zero_grad()
+            
+            with torch.cuda.amp.autocast(enabled=True):
+                # Forward: Mask → Fake Image
+                if random.random() < 0.9:
+                    style = mixed_list(real_img.shape[0], 5, Gen.latent_dim, device=device)
+                else:
+                    style = noise_list(real_img.shape[0], 5, Gen.latent_dim, device=device)
+                
+                im_noise = image_noise(real_mask.shape[0], image_size, device=device)
+                fake_img = Gen(real_mask, style, im_noise)
+
+                # Backward: Image → Fake Mask
+                if random.random() < 0.9:
+                   style = mixed_list(real_mask.shape[0], 4, Gen.latent_dim, device=device)
+                else:
+                   style = noise_list(real_mask.shape[0], 4, Gen.latent_dim, device=device)
+
+                im_noise = image_noise(real_img.shape[0], image_size, device=device)
+                fake_mask = Gen(real_img, style=None, input_noise=None)
+                #fake_mask = torch.sigmoid(fake_mask)  # Convert to [0,1] range
+                
+                # Cycle Consistency: Fake Image → Reconstructed Mask
+                cycled_mask = Gen(fake_img, style=None, input_noise=None)
+               # cycled_mask = torch.sigmoid(cycled_mask)
+                
+                # Cycle Consistency: Fake Mask → Reconstructed Image
+                cycled_img = Gen(fake_mask, style, im_noise)
+                
+                # GAN Losses
+                g_loss_D1 = d_criterion_img(D1(DiffAugment(fake_img, p=args.p_diff)), valid)
+                g_loss_D2 = d_criterion_mask(D2(fake_mask), valid)
+                
+                # Cycle Losses
+                cycle_loss_img = Gen_criterion_1(cycled_img, real_img) * 50 + Gen_criterion_2(cycled_img, real_img)*150
+                cycle_loss_mask = d_criterion_mask(cycled_mask, real_mask) * 200
+                
+                # Identity Losses (optional)
+                #id_img = Gen(real_img, style, im_noise)
+                #id_loss_img = Gen_criterion_1(id_img, real_img) * 25
+                
+               # id_mask = Gen(real_mask, style, im_noise)
+               # id_loss_mask = d_criterion_mask(id_mask, real_mask) * 25
+                
+                # Total Generator Loss
+                g_loss = (g_loss_D1 + g_loss_D2 + 
+                         cycle_loss_img + cycle_loss_mask) #+ 
+                        # id_loss_img + id_loss_mask)
+            
+            grad_scaler.scale(g_loss).backward()
+            grad_scaler.step(pretrain_optimizer_G)
+            grad_scaler.update()
+            epoch_g_loss += g_loss.item()
+
+            # =========================
+            #  Train Discriminators
+            # =========================
+            set_requires_grad([D1, D2], True)
+            pretrain_optimizer_D1.zero_grad()
+            pretrain_optimizer_D2.zero_grad()
+            
+            with torch.cuda.amp.autocast(enabled=True):
+                # Train Image Discriminator (D1)
+                real_loss_D1 = d_criterion_img(D1(DiffAugment(real_img, p=args.p_diff)), valid)
+                fake_loss_D1 = d_criterion_img(D1(DiffAugment(fake_img.detach(), p=args.p_diff)), fake)
+                d1_loss = (real_loss_D1 + fake_loss_D1) / 2
+                
+                # Train Mask Discriminator (D2)
+                real_loss_D2 = d_criterion_mask(D2(real_mask), valid)
+                fake_loss_D2 = d_criterion_mask(D2(fake_mask.detach()), fake)
+                d2_loss = (real_loss_D2 + fake_loss_D2) / 2
+            
+            grad_scaler.scale(d1_loss).backward()
+            grad_scaler.scale(d2_loss).backward()
+            grad_scaler.step(pretrain_optimizer_D1)
+            grad_scaler.step(pretrain_optimizer_D2)
+            grad_scaler.update()
+            
+            epoch_d1_loss += d1_loss.item()
+            epoch_d2_loss += d2_loss.item()
+
+        # Logging
+        avg_g_loss = epoch_g_loss / len(train_iterator)
+        avg_d1_loss = epoch_d1_loss / len(train_iterator)
+        avg_d2_loss = epoch_d2_loss / len(train_iterator)
+        
+        print(f"[Pretrain Epoch {pretrain_epoch}:] "
+              f"[G loss: {avg_g_loss:.3f}] "
+              f"[D1 loss: {avg_d1_loss:.3f}] [D2 loss: {avg_d2_loss:.3f}]")
+        
+        val_metrics = validate_cyclegan(
+            Gen, D1, D2, valid_iterator, device, image_size,
+            d_criterion_img, d_criterion_mask, Gen_criterion_1, Gen_criterion_2
+        )
+        
+        # Logging
+        logging.info(
+            f"Val Epoch {pretrain_epoch}: "
+            f"G_loss={val_metrics['g_loss']:.3f} "
+            f"D1_loss={val_metrics['d1_loss']:.3f} "
+            f"D2_loss={val_metrics['d2_loss']:.3f} "
+            f"FID={val_metrics['fid']:.2f}"
+        )
+        
+        # Save checkpoint if FID improves
+        if val_metrics['fid'] < best_fid:
+            best_fid = val_metrics['fid']
+       # if val_metrics['g_loss'] < best_g_loss:
+           # best_g_loss = val_metrics['g_loss']
+            logging.info('>>>> Save the petrained model checkpoints to %s'%(os.path.join(args.output_dir)))
+            torch.save(Gen.state_dict(), os.path.join(args.output_dir, 'Gen_best_fid.pth'))
+            torch.save(D1.state_dict(), os.path.join(args.output_dir, 'D1_pretrained.pth'))
+            torch.save(D2.state_dict(), os.path.join(args.output_dir, 'D2_pretrained.pth'))
+train(args)
