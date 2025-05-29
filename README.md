@@ -13,7 +13,7 @@ This dataset has been cited in the following paper: Boiko, Daniil; Pentsak, Evge
 ## Training SAGE-GAN
 The model can be trained using either a user-supplied dataset or the S1 dataset whose link is provided in this repository. Prior to training, users are advised to configure key hyperparameters, including the choice of segmentation architecture (Attention Unet or UNet) and the early stopping patience parameters. Throughout the training process, the script records detailed logs and periodically saves model checkpoints for the segmentation network (Seg.pth), generator (Gen.pth), and discriminators (D1.pth and D2.pth) within the designated output_dir.
 <pre>Example:
-python train.py --seg_model UNET --train_set_dir  .../S1 dataset/train  --lr 0.0001 --p_vanilla 0.2 --p_diff 0.2 --patience 500 --output_dir tmp/</pre>
+python pretrain+finetune.py --seg_model UNET --train_set_dir  .../S1 dataset/train  --lr 0.0001 --p_vanilla 0.2 --p_diff 0.2 --patience 500 --output_dir tmp/</pre>
 ## Testing the segmentation model
 Evaluate the segmentation model using the S1 dataset or yours, specifying the segmentation model type (seg_model) and its checkpoint directory (seg_ckpt_dir).
 <pre>Example:
