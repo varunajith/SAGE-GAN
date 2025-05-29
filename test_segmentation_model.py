@@ -8,9 +8,9 @@ import random
 from loss import CombinedLoss
 from unet_models import DeepSea,AttentionUnetSegmentation,UnetSegmentation
 from cellpose_model import Cellpose_CPnet
-from data import BasicDataset,get_image_mask_pairs  # Import the Dataset handling module
+from data import BasicDataset,get_image_mask_pairs
 import torch
-from evaluate import evaluate_segmentation  # Import the evaluation function
+from evaluate import evaluate_segmentation 
 
 
 
@@ -21,9 +21,8 @@ import sys
 
 # Simulate command-line arguments
 sys.argv = ['test_segmentation_model.py', '--seg_model','UNET',
-            '--test_set_dir','D:/MSc AV Project/cGAN-Seg-main_2/cGAN-Seg_datasets/FW_real+gen_2/FW_real+gen20/test', '--seg_ckpt_dir',
-            'D:/MSc AV Project/cGAN-Seg-main_2/Pretrain+Finetune_modified_FW_real25_fce_tv(0.3,0.7)_lrsched0.0001_2/Seg.pth',
-            '--output_dir','D:/MSc AV Project/cGAN-Seg-main_2/Pretrain+Finetune_modified_FW_real25_fce_tv(0.3,0.7)_lrsched0.0001_2/Seg']
+            '--test_set_dir','', '--seg_ckpt_dir','',
+            '--output_dir','']
 
 
 
@@ -63,7 +62,7 @@ def test(args, image_size=[512, 768], image_means=[0.5], image_stds=[0.5], batch
 
     # Create an instance of the Segmentation model and load the trained model
     if args.seg_model == 'UNET':
-        Seg = AttentionUnetSegmentation(n_channels=1, n_classes=2).to(device)    # Seg = nn.DataParallel(DeepSea_old(n_channels=1, n_classes=2, bilinear=True)).to(device)
+        Seg = AttentionUnetSegmentation(n_channels=1, n_classes=2).to(device)    
     elif args.seg_model=='CellPose':
        Seg = Cellpose_CPnet(n_channels=1, n_classes=2).to(device)
     elif args.seg_model=='DeepSea':
