@@ -25,4 +25,4 @@ python test_generation_model.py --test_set_dir .../S1 dataset/test/ --gen_ckpt_d
 # Comparitive Models
 A few standard segmentation architectures like UNET,UNET++,DCUNET etc. and generation architectures like GAN and CycleGAN have been implemented, incorporating them within our designed pipeline, including the data augmentations used in our proposed model. These scripts can be found in the folder, named "comparitive models".
 # Useful Information
-For any queries, contact varunajith29@gmail.com .
+For any queries, contact varunajith29@gmail.com / anindyapal264@gmail.com .
