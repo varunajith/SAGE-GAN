@@ -1,7 +1,7 @@
 # SAGE-GAN
 SAGE-GAN: Our proposed model which consists of a self-attention U-Net which is pretrained from scratch on a small set of real EM images to accurately segment nanoparticle features while suppressing background noise. This pretrained U-Net is then embedded into a CycleGAN (cGAN-Seg) architecture, enabling the generation of synthetic EM images that are structurally aligned with ground-truth masks via cycle consistency. This integration enhances nanoparticle segmentation accuracy and robustness, especially in data-limited scenarios. This repository contains the scripts for training and evaluating our model, as well as the publicly available S1 nanoparticle dataset upon which this model was trained. 
 
-![Pretrain+ Finetune CycleGAN Model flowchart-Page-1 drawio (1)](https://github.com/user-attachments/assets/75044958-246a-41e8-adc4-1522addc7f82)
+![SAGE-GAN_model2](https://github.com/user-attachments/assets/150f2e85-41d5-42ce-b72b-5c8b802fedf1)
 # Dataset
 The publicly available S1 nanoparticle dataset's link is being provided here: https://doi.org/10.6084/m9.figshare.11783661.v1
 
